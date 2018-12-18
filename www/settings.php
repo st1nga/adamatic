@@ -33,7 +33,7 @@ if (!empty($error_msg))
 
 $dsn = 'mysql:dbname=ads;host=database';
 $user = 'ads_o';
-$passwd = 'ads wonderful ads';
+$passwd = '????';
 $error_msg = '';
 $setting_id = '';
 

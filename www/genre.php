@@ -30,7 +30,7 @@ if (!empty($error_msg))
 logit(0, "starting");
 $dsn = 'mysql:dbname=ads;host=database';
 $user = 'ads_o';
-$passwd = 'ads wonderful ads';
+$passwd = '????';
 $error_msg = '';
 $genre_id = '';
 

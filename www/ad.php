@@ -143,7 +143,7 @@ return $html;
 logit(0, "starting");
 $dsn = 'mysql:dbname=ads;host=database';
 $user = 'ads_o';
-$passwd = 'ads wonderful ads';
+$passwd = '????';
 $error_msg = '';
 $ad_id = '';
 

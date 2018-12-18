@@ -4,7 +4,7 @@ include("/coastfm/phplib/general.php");
 
 $dsn = 'mysql:dbname=ads;host=database';
 $user = 'ads_r';
-$passwd = 'all the ads';
+$passwd = '????';
 
 try
 {
