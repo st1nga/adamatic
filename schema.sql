@@ -165,6 +165,60 @@ CREATE TABLE `settings` (
   KEY `k_setting` (`setting`(191))
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping routines for database 'ads'
+--
+/*!50003 DROP PROCEDURE IF EXISTS `ads_today` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_general_ci */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+DELIMITER ;;
+CREATE DEFINER=`root`@`localhost` PROCEDURE `ads_today`()
+BEGIN
+SET @endt = (select `value` from settings where setting = 'end_time');
+set @startt = (select value from settings where setting = 'start_time');
+select concat("Ad summary for core hours from ", @startt, " to ", @endt) as '';
+select a.ad_id, a.name 'ad name', at.name 'ad type', g.genre, at.plays_allowed, count(*) 'times played', if(at.plays_allowed > count(*), 'Boo hiss:-(', 'Yay\!\!:-)') 'Good or bad?'
+from ads a, ad_played ap, ad_type at, genre g
+where a.ad_id = ap.ad_id and at.ad_type_id = a.ad_type_id and a.genre_id = g.genre_id and date(ap.played) = curdate() and ap.played between date(now()) + interval @startt hour and date(now()) + interval @endt hour group by (ap.ad_id);
+select concat("Ad summary for non core hours before ", @startt, " and after ", @endt) as '';
+select a.ad_id, a.name 'ad name', at.name 'ad type', g.genre, count(*) 'times played'
+from ads a, ad_played ap, ad_type at, genre g
+where a.ad_id = ap.ad_id and at.ad_type_id = a.ad_type_id and a.genre_id = g.genre_id and date(ap.played) = curdate() 
+and (ap.played < date(now()) + interval @startt hour or ap.played > date(now()) + interval @endt hour) group by (ap.ad_id);
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `show_playlist` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_general_ci */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+DELIMITER ;;
+CREATE DEFINER=`root`@`localhost` PROCEDURE `show_playlist`()
+begin
+select a.ad_id, at.name 'ad type', g.genre, a.name 'ad name', p.duplicate_genre,p.to_play,p.over_played,p.spread, p.random
+from playlist p, ads a,ad_type at, genre g where a.ad_id = p.ad_id and a.ad_type_id = at.ad_type_id and g.genre_id = a.genre_id
+order by p.random;
+end ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -175,4 +229,4 @@ CREATE TABLE `settings` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2018-12-18 18:33:06
+-- Dump completed on 2018-12-18 18:50:57
