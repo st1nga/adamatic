@@ -316,7 +316,7 @@ logit(1, "Hello world!");
 #+
 #connect to ads DB
 #-
-$DBH = DBI->connect ('dbi:mysql:ads', 'ads_o', 'ads wonderful ads', {PrintError => 0} ) or die "Can't connect to mSQL database: $DBI::errstr\n" ;
+$DBH = DBI->connect ('dbi:mysql:ads', 'ads_o', '???', {PrintError => 0} ) or die "Can't connect to mSQL database: $DBI::errstr\n" ;
 
 logit(5, "Connected to ads DB");
 
