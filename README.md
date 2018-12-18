@@ -26,7 +26,7 @@ adamatic appends flac file together to make the required total ad length.
 It attempts to spread the ads out over the core hours.
 IE: If you have core hours of 0700 to 2200 (15 hours) and you sell 5 plays a day to customer, it tries to spread the ads out through the day in this case every 3 hours.
 There is also a genre, IE "Pubs" this attemps to stop two pub ads playing in the same ad slot, obviously two many of the same type and you will have a problem. (we have not got there yet)
-If there are no ads to play in an ad slot then it can play an internal ad. IE "You have advertise here contact the sation on ...."
+If there are no ads to play in an ad slot then it can play an internal ad. IE "You can advertise here contact ths station on ...."
 
 
 
@@ -35,4 +35,9 @@ At this time there is no password protection.
 We use it behind our filewall so it is NOT exposed the outside world and I would not expose it in its current form to the outside world.
 Since users would have access to the actual playout systems it was deemed unnecessary.
 
+create_ad.pl creates 1 ad slot that will played next
+adamatic.pl creates 48 adverts, thats 2 per hour to be played at :15 and :45 minutes past the hour.
 
+todo:
+- Fix the genre processing it does not do what it says on the tin.
+- Merge create_ad.pl and adamatic.pl and allow the number of ads per hour to be configurable.
