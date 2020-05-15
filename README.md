@@ -34,10 +34,3 @@ Warning:
 At this time there is no password protection.
 We use it behind our filewall so it is NOT exposed the outside world and I would not expose it in its current form to the outside world.
 Since users would have access to the actual playout systems it was deemed unnecessary.
-
-create_ad.pl creates 1 ad slot that will played next
-adamatic.pl creates 48 adverts, thats 2 per hour to be played at :15 and :45 minutes past the hour.
-
-todo:
-- Fix the genre processing it does not do what it says on the tin.
-- Merge create_ad.pl and adamatic.pl and allow the number of ads per hour to be configurable.
