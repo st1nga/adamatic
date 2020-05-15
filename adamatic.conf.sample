@@ -1,0 +1,14 @@
+[adamatic]
+log-file = /var/log/adamatic.log
+
+#log-to-screen only if blank anything else means don't log (Historical fubar)
+log-to-screen = 'no'
+debug-level = 4
+tpush = /usr/local/bin/tpush
+
+[sql]
+username = 
+password = 
+database = 
+
+

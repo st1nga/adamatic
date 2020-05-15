@@ -3,6 +3,13 @@
 # Using the ads database, select ads to play, merge into one file and move
 #  location ready for playout 
 #===========================================================================
+# Modifications
+# 10-May-2020 mikep
+# Don't play ads that are in the same genre
+#
+# 14-May-2020 mikep
+# Removed CGI stuff, why was it there???
+# Added config file so we can remove hardcoded values
 #---------------------------------------------------------------------------
 
 use strict;
@@ -10,66 +17,54 @@ use strict;
 use Time::HiRes qw(gettimeofday);
 use File::Copy;
 use DBI;
+use Config::IniFiles;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "auto_abbrev");
 
 use lib "/coastfm/perllib";
 use general;
 
-$LOG_file = "/var/log/adamatic.log";
-#$LOG_batch = 'yes';
-$LOG_debug = "3";
-
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# Convert seconds to HHMM
+# Subroutine Usage
 #---------------------------------------------------------------------------
-sub convert_seconds_to_hhmm
+sub usage
 {
-my ($hourz, $leftover, $minz);
-my %p = (@_);
-my $seconds = $p{seconds};
-
-$hourz=int($seconds/3600);
-$leftover=$seconds % 3600;
-$minz=int($leftover/60);
-
-return ($hourz,$minz);
-
+print "Error: @_. " if (@_);
+print << 'EOD';
+Usage is...
+  adamatic.pl
+    [--help] This message
+    [--config-file=] Configuration file, default=/etc/adamatic.conf
+EOD
+exit 1;
 }#EOS
 #---------------------------------------------------------------------------
-
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# Randomize the playlist
+#Generate an internal ad when there is nothing to play
 #---------------------------------------------------------------------------
-sub randomize_playlist
+sub generate_internal_ad
 {
 my ($sql, $STH);
-my ($playlist_id);
+my ($ad_id);
 
 my %p = (@_);
 my $DBH = $p{DBH};
 
-$sql = "select playlist_id from playlist";
+$sql = "select a.ad_id from ads a, ad_type at where now() between a.start and a.end and a.ad_type_id = at.ad_type_id and at.name = 'internal' order by rand() limit 1";
 $STH = $DBH->prepare($sql);
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
 $STH->execute();
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-($playlist_id) = $STH->fetchrow_array();
+($ad_id) = $STH->fetchrow_array();
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
+$sql = "insert into playlist (ad_id, to_play) values ($ad_id, 1)";
+$DBH->do($sql);
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-while ($playlist_id)
-{
-  $sql = "update playlist p, ads a, ad_type at set random = -log(1 -" . rand() . "/ (a.multiplier + at.multiplier)), duplicate_genre = 0, to_play = 0, over_played = 0, spread = 0 "
-        ."where playlist_id = $playlist_id and p.ad_id = a.ad_id and a.ad_type_id = at.ad_type_id";
-  $DBH->do($sql);
-  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
-  logit(5, $sql);
-  ($playlist_id) = $STH->fetchrow_array();
-  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
-}
-$sql = "delete from playlist where ad_id in (select a.ad_id from ads a, ad_type at where a.ad_id = ad_id and at.ad_type_id = a.ad_type_id and at.name = 'internal')";
-logit(5, $sql);
+$sql = "insert into ad_played (ad_id) values ($ad_id)";
 $DBH->do($sql);
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
@@ -98,7 +93,27 @@ $sql = "insert into playlist (ad_id) select ad_id from ads a, ad_type at where n
 $DBH->do($sql);
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-randomize_playlist(DBH => $DBH);
+$sql = "select playlist_id from playlist";
+$STH = $DBH->prepare($sql);
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+
+$STH->execute();
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+
+($playlist_id) = $STH->fetchrow_array();
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+
+
+while ($playlist_id)
+{
+  $sql = "update playlist p, ads a, ad_type at set random = -log(1 -" . rand() . "/ (a.multiplier + at.multiplier)) "
+        ."where playlist_id = $playlist_id and p.ad_id = a.ad_id and a.ad_type_id = at.ad_type_id";
+  $DBH->do($sql);
+  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+  logit(5, $sql);
+  ($playlist_id) = $STH->fetchrow_array();
+  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+}
 
 }#EOS
 #---------------------------------------------------------------------------
@@ -118,7 +133,6 @@ my %p = (@_);
 my $DBH = $p{DBH};
 my $break_length_s = $p{break_length_s};
 $total_ad_length = 0;
-my $ad_time = sprintf(" %02d:%02d", $p{ad_hour}, $p{ad_minute});
 
 #+
 #Get the number of ads available to play
@@ -131,7 +145,7 @@ while ($total_ad_length < $break_length_s and $ads_left_to_play != 0)
 {
   $sql = "select p.ad_id, a.genre_id, a.length_s "
          ."from playlist p, ads a "
-         ."where p.to_play = 0  and p.spread = 0 and p.over_played = 0 and a.ad_id = p.ad_id and a.genre_id <> $genre_id "
+         ."where p.to_play = 0  and p.duplicate_genre = 0 and p.spread = 0 and p.over_played = 0 and a.ad_id = p.ad_id "
          ."order by random "
          ."limit 1";
 
@@ -154,8 +168,7 @@ while ($total_ad_length < $break_length_s and $ads_left_to_play != 0)
 #+
 #Log that we have played the ad
 #-
-  $sql = "insert into ad_played (ad_id, played) values ($ad_id, concat(date(now()), '$ad_time'))";
-  logit(5, $sql);
+  $sql = "insert into ad_played (ad_id) values ($ad_id)";
   $DBH->do($sql);
   check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
@@ -168,12 +181,16 @@ while ($total_ad_length < $break_length_s and $ads_left_to_play != 0)
   check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
 #+
+#disable all ad in same genre we have just selected
+#-
+  $sql = "update playlist p, genre g, ads a set duplicate_genre = 1 where g.genre_id = $genre_id and p.ad_id = a.ad_id and g.genre_id = a.genre_id";
+  logit(5, $sql);
+  $DBH->do($sql);
+  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+
+#+
 #Add ad length to total ad break length
 #-
-#  $sql = "select length_s from ads where ad_id = $ad_id";
-#  ($length_s) = $DBH->selectrow_array($sql);
-#  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
-
   $total_ad_length = $total_ad_length + $length_s;
 
 #+
@@ -182,7 +199,6 @@ while ($total_ad_length < $break_length_s and $ads_left_to_play != 0)
   $sql = "select count(*) from playlist where to_play = 0 and over_played = 0 and spread = 0";
   ($ads_left_to_play) = $DBH->selectrow_array($sql);
   check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
-
 }
 
 #+
@@ -194,7 +210,10 @@ if ($ads_left_to_play == 0 and $total_ad_length < $break_length_s)
   if ($total_ad_length == 0)
   {
     logit(1, "We didn't find anything to add, that sucks, maybe we should add a CoastFM ad?");
-    $sql = "insert into playlist (ad_id, to_play) select a.ad_id, 1 from ads a, ad_type at where now() between a.start and a.end and a.ad_type_id = at.ad_type_id and at.name = 'internal' order by rand() limit 1";
+    $sql = "insert into playlist (ad_id, to_play) select a.ad_id, 1 from ads a, ad_type at where now() between a.start and a.end and a.ad_type_id = at.ad_type_id and at.name = 'internal'";
+    $DBH->do($sql);
+    check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+    $sql = "insert into ad_played (ad_id) select a.ad_id from ads a, ad_type at where now() between a.start and a.end and a.ad_type_id = at.ad_type_id and at.name = 'internal'";
     $DBH->do($sql);
     check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
   } else
@@ -223,8 +242,6 @@ my $core_start_time = $p{core_start_time};
 $sql = "select a.ad_id, a.name, at.name, at.plays_allowed, count(*) from ads a, ad_played ap, ad_type at "
       ."where a.ad_id = ap.ad_id and at.ad_type_id = a.ad_type_id and date(ap.played) = curdate() "
       ."and ap.played between date(now()) + interval $core_start_time hour and date(now()) + interval $core_end_time hour group by (ap.ad_id)";
-logit(5, $sql);
-
 $STH = $DBH->prepare($sql);
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
@@ -297,7 +314,6 @@ my $DBH = $p{DBH};
 my $core_time_minutes = $p{core_time_minutes};
 my $core_end_time = $p{core_end_time};
 my $core_start_time = $p{core_start_time};
-my $ad_time = sprintf(" %02d:%02d", $p{ad_hour}, $p{ad_minute});
 
 $sql = "select ad_id from playlist";
 check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
@@ -312,13 +328,12 @@ check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 while ($ad_id)
 {
 
-  $sql = "select a.name 'Ad name', at.name 'Ad type', if(concat(date(now()), '$ad_time')  >  ap.played + interval (${core_time_minutes} / (at.plays_allowed) - at.fudge_factor) minute, 'YES','NO') 'Play?', "
-        ."ap.played, ap.played + interval (${core_time_minutes} / at.plays_allowed) - at.fudge_factor minute 'Dont play until' from playlist p, ad_type at, ads a "
+  $sql = "select a.name, at.name, if(now() >  ap.played + interval (${core_time_minutes} / (at.plays_allowed) - at.fudge_factor) minute, 'YES','NO'), "
+        ."ap.played, ap.played + interval (${core_time_minutes} / at.plays_allowed) - at.fudge_factor minute from playlist p, ad_type at, ads a "
         ."left join ad_played ap on a.ad_id = ap.ad_id  where a.ad_id = p.ad_id and p.ad_id = a.ad_id and a.ad_id=$ad_id "
         ."and ap.played >= date(now()) + interval $core_start_time hour and ap.played < date(now()) + interval  $core_end_time hour "
         ."and a.ad_type_id = at.ad_type_id order by played desc limit 1";
 
-  logit(5, $sql);
   ($ad_name, $ad_type_name, $play_it, $played, $dont_play_until) = $DBH->selectrow_array($sql);
   check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
@@ -341,38 +356,72 @@ while ($ad_id)
 #main MAIN Main
 #---------------------------------------------------------------------------
 {
-my ($cgi_params);
 my ($DBH, $sql, $STH);
 my ($valid_ad_count, $ad_type, $break_length_s, $merge_output);
 my ($ad_length);
 my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst);
 my ($files_to_merge, $merge_cmd);
-my ($ad_hour, $ad_minute);
+my ($return, $help, $config_file);
 
-my ($core_start_time, $core_end_time, $flac_output_file, $flac_output_file_template);
+my ($core_start_time, $core_end_time, $flac_output_file);
 
 my ($flac_merge);
-
-my $seconds_from_midnight = 900;
+my ($config);
+my ($tpush_cmd, $tpush_output);
+my $tpush_bin = "/usr/local/bin/tpush";
 
 ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
 
-logit(1, "Hello world!");
+#+
+#Get all the option passed and validate
+#-
+$return = GetOptions('--help|?' => \$help,
+                     '--config-file:s' => \$config_file);
+
+if ($help)
+{
+  usage();
+  exit
+}
+
+if (!$config_file)
+{
+  $config_file = '/etc/adamatic.conf'
+}
+
+#+
+#parse the config fie
+#-
+$config = Config::IniFiles->new( -file => $config_file);
+
+$LOG_file = $config->val('adamatic', 'log-file');
+$LOG_batch = $config->val('adamatic', 'log-to-screen');
+$LOG_debug = $config->val('adamatic', 'debug-level');
+
+logit(1, "Hello world! Log=$LOG_debug");
 #stack_dump(1);
 
 #+
 #connect to ads DB
 #-
-$DBH = DBI->connect ('dbi:mysql:ads_test', 'ads_o', 'ads wonderful ads', {PrintError => 0} ) or die "Can't connect to mSQL database: $DBI::errstr\n" ;
+$DBH = DBI->connect ('dbi:mysql:ads:database', $config->val('sql', 'username'), $config->val('sql', 'password'), {PrintError => 0} ) or die "Can't connect to mSQL database: $DBI::errstr\n";
 
-logit(5, "Connected to ads DB");
+logit(5, "Connected to DB");
 
 #+
 #Getting settings from settings table
 #-
 $core_start_time = get_setting(DBH => $DBH, setting => 'start_time');
 $core_end_time = get_setting(DBH => $DBH, setting => 'end_time');
-$flac_output_file_template = get_setting(DBH => $DBH, setting => 'flac_output_file');
+$flac_output_file = get_setting(DBH => $DBH, setting => 'flac_output_file');
+
+#+
+#Copy the existing output file
+#-
+$tpush_cmd = $config->val('adamatic', 'tpush') . " -s $flac_output_file" . ".flac";
+logit(1, $tpush_cmd);
+#$tpush_cmd = "$tpush_bin -s $flac_output_file" . ".flac";
+$tpush_output = qx($tpush_cmd);
 
 $sql = "select length_s from ad_length where now() between start and end order by ad_length_id desc limit 1";
 ($break_length_s) = $DBH->selectrow_array($sql);
@@ -394,90 +443,67 @@ if ($valid_ad_count == 0)
 populate_playlist(DBH => $DBH);
 
 #+
-#Generate all ads for the next 24 hours
-#-
-for (my $i=1; $i<= 48; $i++)
-{
-  ($ad_hour, $ad_minute) = convert_seconds_to_hhmm(seconds => $seconds_from_midnight);
-  logit(0, sprintf("Ad time = %02d:%02d", $ad_hour, $ad_minute));
-  $seconds_from_midnight = $seconds_from_midnight + 1800;
-
-#+
 #Test to see if we are in core hours
 #-
-  if ($ad_hour >= $core_start_time and $ad_hour < $core_end_time)
-  {
-    logit(1, "We are in core hours. ${core_start_time}:00 to ${core_end_time}:00");
-    remove_over_played_ads(DBH => $DBH, core_start_time => $core_start_time, core_end_time => $core_end_time);
-    ad_spreading(DBH => $DBH, core_time_minutes => ($core_end_time - $core_start_time) * 60, core_start_time => $core_start_time, core_end_time => $core_end_time, ad_hour => $ad_hour, ad_minute => $ad_minute);
-  }
+if ((localtime)[2] >= $core_start_time and (localtime)[2] < $core_end_time)
+{
+  logit(1, "We are in core hours. ${core_start_time}:00 to ${core_end_time}:00");
+  remove_over_played_ads(DBH => $DBH, core_start_time => $core_start_time, core_end_time => $core_end_time);
+  ad_spreading(DBH => $DBH, core_time_minutes => ($core_end_time - $core_start_time) * 60, core_start_time => $core_start_time, core_end_time => $core_end_time);
+}
+
 #+
 # When we get here then we have identified all the ads we can play, so pick the ads we want to play
 #-
-  pick_ads(DBH => $DBH, break_length_s => $break_length_s, ad_hour => $ad_hour, ad_minute => $ad_minute);
+pick_ads(DBH => $DBH, break_length_s => $break_length_s);
 
 #
 #Generate mp3 with all ads combined
 #-
 
-  $sql = "select a.ad_id, p.to_play, at.name, g.genre, a.name, a.length_s, a.path "
-        ."from playlist p, ads a,ad_type at, genre g "
-        ."where a.ad_type_id = at.ad_type_id and a.genre_id = g.genre_id and a.ad_id = p.ad_id and to_play > 0 order by to_play";
-  $STH = $DBH->prepare($sql);
-  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+$sql = "select p.to_play, at.name, a.name, a.length_s, a.path from playlist p, ads a,ad_type at where a.ad_type_id = at.ad_type_id and a.ad_id = p.ad_id and to_play > 0 order by to_play";
+$sql = "select a.ad_id, p.to_play, at.name, g.genre, a.name, a.length_s, a.path "
+      ."from playlist p, ads a,ad_type at, genre g "
+      ."where a.ad_type_id = at.ad_type_id and a.genre_id = g.genre_id and a.ad_id = p.ad_id and to_play > 0 order by to_play";
+$STH = $DBH->prepare($sql);
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-  $STH->execute();
-  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+$STH->execute();
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-  my ($ad_id, $to_play, $ad_type, $genre, $name, $length_s, $path) = $STH->fetchrow_array();
-  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
+my ($ad_id, $to_play, $ad_type, $genre, $name, $length_s, $path) = $STH->fetchrow_array();
+check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 
-  $ad_length = 0;
+$ad_length = 0;
 
-  $flac_merge = '';
-  $files_to_merge = 0;
-  while ($to_play)
+while ($to_play)
+{
+  logit (1, "$to_play... $length_s second ${ad_type}-${genre}, (ad=$ad_id) '$name' from '$path'");
+  $files_to_merge++;
+  if ($flac_merge ne '')
   {
-    logit (1, "$to_play... $length_s second ${ad_type}-${genre}, (ad=$ad_id) '$name' from '$path'");
-    $files_to_merge++;
-
-    if ($flac_merge ne '')
-    {
-      $flac_merge .= " ";
-    }
-
-    $flac_merge .= $path;
-    $ad_length = $ad_length + $length_s;
-    ($ad_id, $to_play, $ad_type, $genre, $name, $length_s, $path) = $STH->fetchrow_array();
-    check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
-  }
-  logit(5, $flac_merge);
-
-#+
-#Decide wether to merge or copy
-#-
-  $flac_output_file = sprintf("%s_%02d%02d", $flac_output_file_template, $ad_hour, $ad_minute);
-logit(0, $flac_output_file);
-#logit(0, $ad_hour);
-#logit(0, $ad_minute);
-  if ($files_to_merge > 1)
-  {
-    $merge_cmd = sprintf("/usr/bin/shntool join %s -rnone -Oalways -Pnone -oflac -a%s 2>&1", $flac_merge, $flac_output_file);
-  } else
-  {
-    $merge_cmd = sprintf("/bin/cp %s %s.flac", $flac_merge, $flac_output_file);
+    $flac_merge .= " ";
   }
 
-#+
-#Do the flac merge or copy
-logit(1, $merge_cmd);
-  $merge_output = qx($merge_cmd);
-  logit(1, "\n$merge_output");
-
-  randomize_playlist(DBH => $DBH);
+  $flac_merge .= $path;
+  $ad_length = $ad_length + $length_s;
+  ($ad_id, $to_play, $ad_type, $genre, $name, $length_s, $path) = $STH->fetchrow_array();
+  check_dbi_error(err => $DBI::err, errstr => $DBI::errstr, msg => $sql);
 }
 
-#copy($flac_output_file . ".flac", $flac_output_file. ".flac" . sprintf("-%02d%02d%02d%02d%02d%02d", $year-100,$mon+1,$mday,$hour,$min,$sec));
+if ($files_to_merge > 1)
+{
+  $merge_cmd = sprintf("/usr/bin/shntool join %s -rnone -Oalways -Pnone -oflac -a%s 2>&1", $flac_merge, $flac_output_file);
+} else
+{
+  $merge_cmd = sprintf("/bin/cp %s %s.flac", $flac_merge, $flac_output_file);
+}
+
+logit(1, $merge_cmd);
+$merge_output = qx($merge_cmd);
+logit(1, "\n$merge_output");
+
+#copy($flac_output_file . ".flac", $flac_output_file. ".flac" . sprintf("-%02d%02d%02d%02d%02d%02dx", $year-100,$mon+1,$mday,$hour,$min,$sec));
 
 logit(1, "all Done!!!");
 
